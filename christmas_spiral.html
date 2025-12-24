@@ -301,6 +301,84 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+
+        /* ============= MOBILE RESPONSIVE ============= */
+        @media screen and (max-width: 768px) {
+            .title {
+                top: 15px;
+            }
+            
+            .title h1 {
+                font-size: clamp(28px, 8vw, 50px);
+            }
+            
+            .title h2 {
+                font-size: 10px;
+                letter-spacing: 3px;
+            }
+            
+            .upload-btn {
+                bottom: 15px;
+                left: 15px;
+                padding: 12px 18px;
+                font-size: 14px;
+            }
+            
+            .replay-btn {
+                bottom: 15px;
+                right: 15px;
+                padding: 12px 18px;
+                font-size: 14px;
+            }
+            
+            .photo-count {
+                bottom: 60px;
+                left: 15px;
+                font-size: 11px;
+            }
+            
+            .lightbox img {
+                max-width: 95vw;
+                max-height: 80vh;
+            }
+            
+            .lightbox-close {
+                top: 10px;
+                right: 10px;
+                width: 45px;
+                height: 45px;
+                font-size: 20px;
+            }
+        }
+        
+        @media screen and (max-width: 480px) {
+            .title h1 {
+                font-size: 26px;
+            }
+            
+            .title h2 {
+                font-size: 9px;
+                letter-spacing: 2px;
+            }
+            
+            .upload-btn, .replay-btn {
+                padding: 10px 14px;
+                font-size: 12px;
+            }
+        }
+        
+        /* Touch-friendly improvements */
+        @media (hover: none) and (pointer: coarse) {
+            .upload-btn:active,
+            .replay-btn:active {
+                transform: scale(0.95);
+                background: rgba(0, 200, 255, 0.5);
+            }
+            
+            .lightbox-close:active {
+                background: rgba(255, 107, 107, 0.8);
+            }
+        }
     </style>
 </head>
 
@@ -342,41 +420,73 @@
 
         // ============= PHOTOS (will be loaded from API) =============
         let PHOTOS = [];
+        
+        // Default photos (for GitHub Pages where no server API)
+        const DEFAULT_PHOTOS = [
+            'z7236242596457_2a63baeb10ae46da8bd599776c4f7d31.jpg',
+            'z7236244048498_8939048ecf001c5d6d648380bc177324.jpg',
+            'z7236247323409_c27736deff74ac64dda2a45a0275ff5d.jpg',
+            'z7236247331455_fbd8c5c12d234171fa0338cc1a34bcc4.jpg',
+            'z7236247364324_29fb3d4f2c652566b56983454ddebf91.jpg',
+            'z7236247374946_fb4cc9fc594a63675ad0871c3aae3e44.jpg',
+            'z7236247383581_d8123a41efb68a4c137513d2856f9de2.jpg',
+            'z7236247393089_a5edac566e4179d7d5426e8af75be0a0.jpg',
+            'z7236247400424_b450561f37018548aecf87a55a2e7376.jpg',
+            'z7236247407464_57495fbc0da3d1930f3605b4dd8e5199.jpg',
+            'z7236247419683_1e0f1cf24a19456ff847cc306443c1e6.jpg',
+            'z7236247448007_67cb351435a21cccf9a711f17b43704f.jpg',
+            'z7236247452797_b38d75413a04c5c3ece2f007456f901c.jpg',
+            'z7236247460999_069441156bb9f3083581728e186419c5.jpg',
+            'z7236247468178_a5716d42259f274b8d22e18ee39023d7.jpg',
+            'z7236247474121_f5e205f50d06df9b2c85de2a4666587f.jpg',
+            'z7236247482503_c60d05a6cb9241c8981f1abcef06af72.jpg',
+            'z7236247495392_1fda2d0fd0f0c1651f8d04af40e3edd0.jpg',
+            'z7236247502947_93540d7f74d798f024d5657b037745c2.jpg',
+            'z7236247516002_5f7a6b41e5f3050047eb71920256b487.jpg',
+            'z7236247519672_5d8464907410cf37542bbdb1457122d8.jpg',
+            'z7236247528245_9fb5c14946f4ce922ede271720b12f75.jpg',
+            'z7236247535890_159153f750e654ff347f23f09d5396fd.jpg',
+            'z7236257778474_76cd6428f28467e1205bb97813065dc6.jpg',
+            'z7236258780175_1ab49a4f9b95e47dba64c7ca7838e9f8.jpg',
+            'z7236260609795_3ab12a1007713cef54d0e64f13b21c5b.jpg',
+            'z7236260623447_d7c5ab4f7d5faf149ef8fb95d7f64118.jpg',
+            'z7236263748569_c0b6b02f65c7172bbff1f92db8c3c75b.jpg',
+            'z7236398126528_eaa8890e742e8c535df130cb60849bd5.jpg',
+            'z7236398330845_5c0c3e6caaffcc851253adc991f73def.jpg',
+            'z7237523993531_9d67dbf77ec3dbae08c017fc08e82b2e.jpg',
+            'z7237524119706_d94e6288dbe7b77ab1951f912bfde7b4.jpg',
+            'z7237524155708_fd3e809a1b1e6f5ee56472edfba2e046.jpg',
+            'z7273597348262_415967b0f1390e37731c953585a0891e.jpg',
+            'z7273681154500_af11fc914418e58a42057cf8acf29246.jpg',
+            'z7297410103401_5fe1c88fbfc0aafa35e34be71cb1080f.jpg',
+            'z7297410221151_6a1ede7fc2f4bc13b586af619b956d11.jpg',
+            'z7297410792510_f432d6cff110a90afd984bc0273178e8.jpg',
+            'z7352055122900_f9b4d668de8f0bbba5816a8cd6f1e6a2.jpg',
+            'z7358405269384_50d326aad38426b37eb14777b32b5b8e.jpg',
+            'z7358405981419_399bead1a583921f0ea89f008152608b.jpg'
+        ];
 
         // Load all images from Firebase Realtime Database
         async function loadAllPhotos() {
+            // Start with default local photos
+            PHOTOS = [...DEFAULT_PHOTOS];
+            
             try {
                 // Load from Firebase Database
                 const snapshot = await database.ref('photos').once('value');
                 const data = snapshot.val();
                 
                 if (data) {
-                    // Convert object to array of photo URLs/base64
-                    PHOTOS = Object.values(data).map(item => item.imageData);
-                    updatePhotoCount();
-                    console.log('Loaded', PHOTOS.length, 'photos from Firebase');
-                } else {
-                    // Fallback to local photos if Firebase is empty
-                    console.log('Firebase empty, loading local photos');
-                    const response = await fetch('/api/all-images');
-                    if (response.ok) {
-                        PHOTOS = await response.json();
-                        updatePhotoCount();
-                    }
+                    // Add Firebase photos to the list
+                    const firebasePhotos = Object.values(data).map(item => item.imageData);
+                    PHOTOS = [...PHOTOS, ...firebasePhotos];
+                    console.log('Loaded', firebasePhotos.length, 'photos from Firebase');
                 }
             } catch (e) {
-                console.log('Firebase error, using local photos:', e);
-                // Fallback to local server
-                try {
-                    const response = await fetch('/api/all-images');
-                    if (response.ok) {
-                        PHOTOS = await response.json();
-                        updatePhotoCount();
-                    }
-                } catch (err) {
-                    console.log('Using default photos');
-                }
+                console.log('Firebase error:', e);
             }
+            
+            updatePhotoCount();
         }
 
         function updatePhotoCount() {
@@ -443,16 +553,21 @@
             createSnowParticles();
             createCSSSnowflakes();
 
-            // Setup OrbitControls
+            // Setup OrbitControls - optimized for mobile
             controls = new OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
             controls.dampingFactor = 0.05;
             controls.enableZoom = true;
-            controls.minDistance = 10;
+            controls.minDistance = window.innerWidth < 768 ? 12 : 10;
             controls.maxDistance = 40;
             controls.enablePan = false;
             controls.autoRotate = true;
             controls.autoRotateSpeed = 0.5;
+            controls.touches = {
+                ONE: THREE.TOUCH.ROTATE,
+                TWO: THREE.TOUCH.DOLLY_PAN
+            };
+            controls.rotateSpeed = window.innerWidth < 768 ? 0.5 : 1;
 
             // Events
             window.addEventListener('resize', onResize);
