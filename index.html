@@ -161,6 +161,20 @@
             0%, 100% { opacity: 0.3; transform: scale(1); }
             50% { opacity: 1; transform: scale(1.2); }
         }
+
+        .copyright {
+            position: fixed;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.4);
+            font-family: 'Poppins', sans-serif;
+            letter-spacing: 1px;
+            pointer-events: none;
+            white-space: nowrap;
+        }
     </style>
 </head>
 
@@ -215,6 +229,8 @@
 
         <button class="ready-btn" onclick="goToTree()">sẵn sàng</button>
     </div>
+
+    <div class="copyright">© Copyright By Hoàng Văn Danh</div>
 
     <script>
         // Create snowflakes
