@@ -572,6 +572,7 @@
             // Events
             window.addEventListener('resize', onResize);
             window.addEventListener('click', onMouseClick);
+            window.addEventListener('touchend', onTouchEnd);
 
             // Load photos then start animation
             loadAllPhotos().then(() => {
@@ -1040,10 +1041,10 @@
             // Photos stay fixed - no updates needed
         }
 
-        function onMouseClick(event) {
-            // Calculate mouse position in normalized device coordinates
-            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        function checkIntersection(x, y) {
+            // Calculate position in normalized device coordinates
+            mouse.x = (x / window.innerWidth) * 2 - 1;
+            mouse.y = -(y / window.innerHeight) * 2 + 1;
 
             raycaster.setFromCamera(mouse, camera);
             
@@ -1052,6 +1053,18 @@
             if (intersects.length > 0) {
                 const clickedPhoto = intersects[0].object;
                 openLightbox(clickedPhoto.userData.photoUrl);
+            }
+        }
+
+        function onMouseClick(event) {
+            checkIntersection(event.clientX, event.clientY);
+        }
+
+        function onTouchEnd(event) {
+            // Use changedTouches for touchend
+            if (event.changedTouches && event.changedTouches.length > 0) {
+                const touch = event.changedTouches[0];
+                checkIntersection(touch.clientX, touch.clientY);
             }
         }
 
