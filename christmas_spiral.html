@@ -74,6 +74,7 @@
             font-size: clamp(36px, 7vw, 70px);
             background: linear-gradient(135deg, #ff6b6b 0%, #ffd93d 50%, #6bcb77 100%);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
             text-shadow: 0 0 50px rgba(255, 217, 61, 0.5);
             animation: titleGlow 2s ease-in-out infinite alternate;
@@ -394,6 +395,73 @@
                 background: rgba(255, 107, 107, 0.8);
             }
         }
+        
+        /* Mobile Joystick */
+        .mobile-joystick {
+            display: none;
+            position: fixed;
+            bottom: 100px;
+            right: 20px;
+            z-index: 200;
+            touch-action: none;
+        }
+        
+        @media (hover: none) and (pointer: coarse) {
+            .mobile-joystick {
+                display: block;
+            }
+        }
+        
+        .joystick-base {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.15);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        
+        .joystick-stick {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: rgba(0, 200, 255, 0.6);
+            border: 2px solid rgba(0, 200, 255, 0.8);
+            position: absolute;
+            transition: background 0.1s;
+            cursor: pointer;
+        }
+        
+        .joystick-stick:active {
+            background: rgba(0, 200, 255, 0.9);
+        }
+        
+        /* Hide All UI Toggle */
+        .hide-ui-toggle {
+            position: fixed;
+            top: 15px;
+            right: 15px;
+            z-index: 300;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: #fff;
+            font-size: 14px;
+            cursor: pointer;
+            opacity: 0.6;
+            transition: opacity 0.3s;
+        }
+        
+        .hide-ui-toggle:hover,
+        .hide-ui-toggle:active {
+            opacity: 1;
+            background: rgba(0, 0, 0, 0.5);
+        }
     </style>
 </head>
 
@@ -415,6 +483,16 @@
     </label>
 
     <div class="photo-count" id="photo-count"></div>
+
+    <!-- Mobile Joystick Control -->
+    <div class="mobile-joystick" id="mobile-joystick">
+        <div class="joystick-base">
+            <div class="joystick-stick" id="joystick-stick"></div>
+        </div>
+    </div>
+    
+    <!-- Hide All UI Toggle -->
+    <button class="hide-ui-toggle" id="hide-ui-toggle" onclick="toggleAllUI()">👁</button>
 
     <div class="loading-overlay" id="loading-overlay">
         <div class="loading-spinner"></div>
@@ -525,40 +603,283 @@
         let isAnimating = true;
         let photosShown = false;
 
-        const CONFIG = {
-            particleCount: 15000,     // Main spiral particles (increased)
-            glowParticleCount: 5000,  // Extra glow particles (increased)
-            snowCount: 600,           // Snow particles
-            spiralTurns: 7,           // Number of spiral turns
-            treeHeight: 12,           // Tree height
-            baseRadius: 5,            // Base radius
-            animationSpeed: 0.004,    // Drawing speed
-            spiralWidth: 1.0          // Width of the spiral band
+
+        // ============= MOBILE DETECTION =============
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) 
+            || window.innerWidth < 768 
+            || ('ontouchstart' in window);
+        
+        // ============= WORLD CONFIG =============
+        const WORLD = {
+            // World size: 10000 x 100000 x 10000
+            sizeX: 10000,
+            sizeY: 100000,
+            sizeZ: 10000,
+            // Chunk settings
+            viewDistance: 80, // Distance to load/show photos
+            unloadDistance: 120, // Distance to unload photos
+            // Photo settings
+            photoSize: 3, // Size of photos in world
+            minPhotoSpacing: 8, // Minimum spacing between photos
+            // Progressive distance settings
+            startRadius: 20, // First photos start at this distance from tree
+            radiusIncrement: 5 // Each subsequent photo is slightly farther
         };
+        
+        // ============= CONFIG =============
+        const CONFIG = {
+            particleCount: isMobile ? 8000 : 15000,
+            glowParticleCount: isMobile ? 2500 : 5000,
+            snowCount: isMobile ? 300 : 600,
+            spiralTurns: 7,
+            treeHeight: 12,
+            baseRadius: 5,
+            animationSpeed: 0.004,
+            spiralWidth: 1.0,
+            maxTextureSize: isMobile ? 768 : 1024,
+            enableBloom: true
+        };
+        
+        // ============= CHUNK SYSTEM =============
+        // Photo data storage (position, url, loaded state)
+        let allPhotoData = []; // {id, url, position: {x,y,z}, loaded: bool, plane: THREE.Mesh|null}
+        let textureCache = new Map();
+        let photoIdCounter = 0;
+        let currentPhotoRadius = WORLD.startRadius; // Track current placement radius
+        
+        // Check if position is too close to existing photos
+        function isPositionTooClose(x, y, z) {
+            for (const photo of allPhotoData) {
+                const dx = photo.position.x - x;
+                const dy = photo.position.y - y;
+                const dz = photo.position.z - z;
+                const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                if (dist < WORLD.minPhotoSpacing) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        // Get photo position with progressive distance from tree
+        function getProgressivePhotoPosition(photoIndex) {
+            const treeRadius = 12; // Keep photos away from tree center
+            let x, y, z;
+            let attempts = 0;
+            const maxAttempts = 50;
+            
+            // Calculate target radius based on photo index
+            // Photos spread out in a spiral pattern
+            const baseRadius = WORLD.startRadius + (photoIndex * WORLD.radiusIncrement * 0.3);
+            const radiusVariation = Math.random() * 10;
+            const targetRadius = baseRadius + radiusVariation;
+            
+            do {
+                // Random angle around tree
+                const angle = Math.random() * Math.PI * 2;
+                
+                // Position at target radius from center
+                x = Math.cos(angle) * targetRadius;
+                z = Math.sin(angle) * targetRadius;
+                
+                // Y position - spread vertically too
+                y = (Math.random() - 0.3) * 15 + 2; // Between -2.5 and 12.5
+                
+                attempts++;
+            } while (isPositionTooClose(x, y, z) && attempts < maxAttempts);
+            
+            return { x, y, z };
+        }
+        
+        // Add photo to world data with progressive positioning
+        function addPhotoToWorld(url) {
+            const photoIndex = allPhotoData.length;
+            const position = getProgressivePhotoPosition(photoIndex);
+            const photoData = {
+                id: photoIdCounter++,
+                url: url,
+                position: position,
+                loaded: false,
+                visible: false,
+                loading: false,
+                plane: null
+            };
+            allPhotoData.push(photoData);
+            console.log(`Photo ${photoIndex} placed at distance ${Math.sqrt(position.x*position.x + position.z*position.z).toFixed(1)} from tree`);
+            return photoData;
+        }
+        
+        // Update visible photos based on camera position
+        function updateChunkVisibility() {
+            if (!camera) return;
+            
+            const cameraPos = camera.position;
+            
+            allPhotoData.forEach(photo => {
+                const dx = photo.position.x - cameraPos.x;
+                const dy = photo.position.y - cameraPos.y;
+                const dz = photo.position.z - cameraPos.z;
+                const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                
+                if (distance < WORLD.viewDistance) {
+                    // Should be visible
+                    if (!photo.visible) {
+                        loadAndShowPhoto(photo);
+                    }
+                } else if (distance > WORLD.unloadDistance) {
+                    // Should be hidden
+                    if (photo.visible) {
+                        hidePhoto(photo);
+                    }
+                }
+            });
+        }
+        
+        // Load and show a photo
+        async function loadAndShowPhoto(photoData) {
+            if (photoData.visible || photoData.loading) return;
+            photoData.loading = true;
+            
+            try {
+                let texture = textureCache.get(photoData.url);
+                
+                if (!texture) {
+                    // Load texture
+                    texture = await loadTexture(photoData.url);
+                    textureCache.set(photoData.url, texture);
+                }
+                
+                // Create plane
+                const aspect = texture.image.width / texture.image.height;
+                const height = WORLD.photoSize;
+                const width = height * aspect;
+                
+                const geometry = new THREE.PlaneGeometry(width, height);
+                const material = new THREE.MeshBasicMaterial({
+                    map: texture,
+                    transparent: true,
+                    opacity: 0,
+                    side: THREE.DoubleSide
+                });
+                
+                const plane = new THREE.Mesh(geometry, material);
+                plane.position.set(photoData.position.x, photoData.position.y, photoData.position.z);
+                
+                // Face camera
+                plane.lookAt(camera.position);
+                
+                plane.userData = { photoUrl: photoData.url, photoId: photoData.id };
+                
+                scene.add(plane);
+                photoPlanes.push(plane);
+                
+                photoData.plane = plane;
+                photoData.visible = true;
+                photoData.loaded = true;
+                
+                // Fade in
+                let opacity = 0;
+                const fadeIn = () => {
+                    opacity += 0.05;
+                    if (opacity < 1 && plane.parent) {
+                        plane.material.opacity = opacity;
+                        requestAnimationFrame(fadeIn);
+                    } else if (plane.parent) {
+                        plane.material.opacity = 1;
+                    }
+                };
+                fadeIn();
+                
+            } catch (e) {
+                console.warn('Failed to load photo:', photoData.url, e);
+            }
+            
+            photoData.loading = false;
+        }
+        
+        // Hide a photo (remove from scene but keep data)
+        function hidePhoto(photoData) {
+            if (!photoData.visible || !photoData.plane) return;
+            
+            const plane = photoData.plane;
+            
+            // Remove from scene
+            scene.remove(plane);
+            const idx = photoPlanes.indexOf(plane);
+            if (idx > -1) photoPlanes.splice(idx, 1);
+            
+            // Dispose geometry (texture stays in cache)
+            plane.geometry.dispose();
+            plane.material.map = null;
+            plane.material.dispose();
+            
+            photoData.plane = null;
+            photoData.visible = false;
+        }
+        
+        // Load texture helper
+        function loadTexture(url) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                
+                img.onload = () => {
+                    // Compress if needed
+                    const canvas = document.createElement('canvas');
+                    const maxSize = CONFIG.maxTextureSize;
+                    let { width, height } = img;
+                    
+                    const ratio = Math.min(maxSize / width, maxSize / height, 1);
+                    width = Math.floor(width * ratio);
+                    height = Math.floor(height * ratio);
+                    
+                    canvas.width = width;
+                    canvas.height = height;
+                    
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                    
+                    const textureLoader = new THREE.TextureLoader();
+                    textureLoader.load(dataUrl, (texture) => {
+                        texture.minFilter = THREE.LinearFilter;
+                        texture.generateMipmaps = false;
+                        resolve(texture);
+                    }, undefined, reject);
+                };
+                
+                img.onerror = reject;
+                img.src = url;
+            });
+        }
 
         function init() {
             const container = document.getElementById('canvas-container');
             
-            // Scene
+            // Scene - large world with reduced fog for visibility
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x000510);
-            scene.fog = new THREE.FogExp2(0x000510, 0.02);
-
-            // Camera - position at same level to make spiral look circular
-            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 0, 20);
+            scene.fog = new THREE.FogExp2(0x000510, 0.003); // Reduced fog for larger world
+            
+            // Camera - far plane extended for huge world
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 5000);
+            camera.position.set(0, 5, 25);
             camera.lookAt(0, 0, 0);
 
             // Renderer
-            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: !isMobile,
+                powerPreference: 'high-performance'
+            });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
             container.appendChild(renderer.domElement);
 
-            // Post-processing with strong bloom
+            // Post-processing
             setupPostProcessing();
 
-            // Group for spiral tree
+            // Group for spiral tree (at world center)
             spiralGroup = new THREE.Group();
             scene.add(spiralGroup);
 
@@ -570,46 +891,228 @@
             createSnowParticles();
             createCSSSnowflakes();
 
-            // Setup OrbitControls - optimized for mobile
+            // Setup OrbitControls - free movement for exploring
             controls = new OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
-            controls.dampingFactor = 0.05;
+            controls.dampingFactor = 0.08;
             controls.enableZoom = true;
-            controls.minDistance = window.innerWidth < 768 ? 12 : 10;
-            controls.maxDistance = 40;
-            controls.enablePan = false;
-            controls.autoRotate = true;
-            controls.autoRotateSpeed = 0.5;
+            controls.minDistance = 5;
+            controls.maxDistance = 2000; // Allow zooming out far
+            controls.enablePan = true; // Enable panning to move around
+            controls.panSpeed = 2;
+            controls.autoRotate = false; // Disable auto rotate for exploration
             controls.touches = {
                 ONE: THREE.TOUCH.ROTATE,
                 TWO: THREE.TOUCH.DOLLY_PAN
             };
-            controls.rotateSpeed = window.innerWidth < 768 ? 0.5 : 1;
+            controls.rotateSpeed = isMobile ? 0.7 : 1;
+            controls.zoomSpeed = isMobile ? 0.8 : 1.2;
+            
+            // Allow looking anywhere
+            controls.maxPolarAngle = Math.PI;
+            controls.minPolarAngle = 0;
 
             // Events
             window.addEventListener('resize', onResize);
             window.addEventListener('click', onMouseClick);
             window.addEventListener('touchend', onTouchEnd);
+            
+            // Keyboard controls for WASD movement
+            setupKeyboardControls();
+            
+            // Mobile joystick controls
+            setupJoystick();
 
             // Load photos then start animation
             loadAllPhotos().then(() => {
                 animate();
             });
         }
+        
+        // Keyboard controls for camera movement
+        let moveState = { forward: false, backward: false, left: false, right: false, up: false, down: false };
+        const moveSpeed = 2;
+        
+        function setupKeyboardControls() {
+            document.addEventListener('keydown', (e) => {
+                switch(e.code) {
+                    case 'KeyW': case 'ArrowUp': moveState.forward = true; break;
+                    case 'KeyS': case 'ArrowDown': moveState.backward = true; break;
+                    case 'KeyA': case 'ArrowLeft': moveState.left = true; break;
+                    case 'KeyD': case 'ArrowRight': moveState.right = true; break;
+                    case 'Space': moveState.up = true; break;
+                    case 'ShiftLeft': moveState.down = true; break;
+                }
+            });
+            
+            document.addEventListener('keyup', (e) => {
+                switch(e.code) {
+                    case 'KeyW': case 'ArrowUp': moveState.forward = false; break;
+                    case 'KeyS': case 'ArrowDown': moveState.backward = false; break;
+                    case 'KeyA': case 'ArrowLeft': moveState.left = false; break;
+                    case 'KeyD': case 'ArrowRight': moveState.right = false; break;
+                    case 'Space': moveState.up = false; break;
+                    case 'ShiftLeft': moveState.down = false; break;
+                }
+            });
+        }
+        
+        function updateCameraMovement() {
+            const direction = new THREE.Vector3();
+            camera.getWorldDirection(direction);
+            
+            const right = new THREE.Vector3();
+            right.crossVectors(direction, camera.up).normalize();
+            
+            if (moveState.forward) {
+                camera.position.addScaledVector(direction, moveSpeed);
+                controls.target.addScaledVector(direction, moveSpeed);
+            }
+            if (moveState.backward) {
+                camera.position.addScaledVector(direction, -moveSpeed);
+                controls.target.addScaledVector(direction, -moveSpeed);
+            }
+            if (moveState.left) {
+                camera.position.addScaledVector(right, -moveSpeed);
+                controls.target.addScaledVector(right, -moveSpeed);
+            }
+            if (moveState.right) {
+                camera.position.addScaledVector(right, moveSpeed);
+                controls.target.addScaledVector(right, moveSpeed);
+            }
+            if (moveState.up) {
+                camera.position.y += moveSpeed;
+                controls.target.y += moveSpeed;
+            }
+            if (moveState.down) {
+                camera.position.y -= moveSpeed;
+                controls.target.y -= moveSpeed;
+            }
+            
+            // Apply joystick movement
+            if (joystickVector.x !== 0 || joystickVector.y !== 0) {
+                const direction = new THREE.Vector3();
+                camera.getWorldDirection(direction);
+                direction.y = 0;
+                direction.normalize();
+                
+                const right = new THREE.Vector3();
+                right.crossVectors(direction, camera.up).normalize();
+                
+                // Forward/backward from joystick Y
+                camera.position.addScaledVector(direction, -joystickVector.y * moveSpeed * 0.5);
+                controls.target.addScaledVector(direction, -joystickVector.y * moveSpeed * 0.5);
+                
+                // Left/right from joystick X
+                camera.position.addScaledVector(right, joystickVector.x * moveSpeed * 0.5);
+                controls.target.addScaledVector(right, joystickVector.x * moveSpeed * 0.5);
+            }
+        }
+        
+        // ============= MOBILE JOYSTICK =============
+        let joystickVector = { x: 0, y: 0 };
+        let joystickActive = false;
+        let joystickBase = null;
+        let joystickStick = null;
+        
+        function setupJoystick() {
+            joystickBase = document.querySelector('.joystick-base');
+            joystickStick = document.getElementById('joystick-stick');
+            
+            if (!joystickBase || !joystickStick) return;
+            
+            const maxDistance = 35; // Max movement radius
+            
+            function updateJoystick(clientX, clientY) {
+                const rect = joystickBase.getBoundingClientRect();
+                const centerX = rect.left + rect.width / 2;
+                const centerY = rect.top + rect.height / 2;
+                
+                let dx = clientX - centerX;
+                let dy = clientY - centerY;
+                
+                // Clamp to circle
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance > maxDistance) {
+                    dx = (dx / distance) * maxDistance;
+                    dy = (dy / distance) * maxDistance;
+                }
+                
+                // Move stick
+                joystickStick.style.transform = `translate(${dx}px, ${dy}px)`;
+                
+                // Normalize to -1 to 1
+                joystickVector.x = dx / maxDistance;
+                joystickVector.y = dy / maxDistance;
+            }
+            
+            function resetJoystick() {
+                joystickStick.style.transform = 'translate(0, 0)';
+                joystickVector.x = 0;
+                joystickVector.y = 0;
+                joystickActive = false;
+            }
+            
+            joystickBase.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                joystickActive = true;
+                const touch = e.touches[0];
+                updateJoystick(touch.clientX, touch.clientY);
+            }, { passive: false });
+            
+            joystickBase.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                if (!joystickActive) return;
+                const touch = e.touches[0];
+                updateJoystick(touch.clientX, touch.clientY);
+            }, { passive: false });
+            
+            joystickBase.addEventListener('touchend', resetJoystick);
+            joystickBase.addEventListener('touchcancel', resetJoystick);
+        }
+        
+        // Toggle all UI visibility
+        let uiHidden = false;
+        window.toggleAllUI = function() {
+            const elements = [
+                document.querySelector('.upload-btn'),
+                document.getElementById('replay-btn'),
+                document.getElementById('photo-count'),
+                document.getElementById('mobile-joystick'),
+                document.querySelector('.title')
+            ];
+            const btn = document.getElementById('hide-ui-toggle');
+            
+            uiHidden = !uiHidden;
+            
+            elements.forEach(el => {
+                if (el) el.style.display = uiHidden ? 'none' : '';
+            });
+            
+            btn.textContent = uiHidden ? '👁‍🗨' : '👁';
+            
+            if (uiHidden) {
+                joystickVector.x = 0;
+                joystickVector.y = 0;
+            }
+        };
 
         function setupPostProcessing() {
             const renderPass = new RenderPass(scene, camera);
             
-            const bloomPass = new UnrealBloomPass(
-                new THREE.Vector2(window.innerWidth, window.innerHeight),
-                1.5,  // Strength - reduced for less overall glow
-                0.4,  // Radius
-                0.7   // Threshold - higher so only bright things glow (not photos)
-            );
-
             composer = new EffectComposer(renderer);
             composer.addPass(renderPass);
-            composer.addPass(bloomPass);
+            
+            // Only add bloom on capable devices
+            if (CONFIG.enableBloom) {
+                const bloomPass = new UnrealBloomPass(
+                    new THREE.Vector2(window.innerWidth, window.innerHeight),
+                    isMobile ? 1.0 : 1.5,  // Reduced strength on mobile
+                    0.4,
+                    0.7
+                );
+                composer.addPass(bloomPass);
+            }
         }
 
         function createSpiralParticles() {
@@ -970,7 +1473,8 @@
 
         function createCSSSnowflakes() {
             const snowflakes = ['❄', '❅', '❆', '✻', '✼', '✽'];
-            for (let i = 0; i < 30; i++) {
+            const count = isMobile ? 15 : 30; // Fewer CSS snowflakes on mobile
+            for (let i = 0; i < count; i++) {
                 const flake = document.createElement('div');
                 flake.className = 'snowflake';
                 flake.textContent = snowflakes[Math.floor(Math.random() * snowflakes.length)];
@@ -986,76 +1490,28 @@
             if (photosShown) return;
             photosShown = true;
 
-            const textureLoader = new THREE.TextureLoader();
-            const shuffled = [...PHOTOS].sort(() => Math.random() - 0.5);
-            
-            // Create 3D photo planes orbiting around tree
-            shuffled.forEach((photoUrl, i) => {
-                setTimeout(() => {
-                    textureLoader.load(photoUrl, (texture) => {
-                        // Calculate aspect ratio
-                        const aspect = texture.image.width / texture.image.height;
-                        const height = 1.5 + Math.random() * 0.5;
-                        const width = height * aspect;
-
-                        const geometry = new THREE.PlaneGeometry(width, height);
-                        const material = new THREE.MeshBasicMaterial({
-                            map: texture,
-                            transparent: true,
-                            opacity: 0,
-                            side: THREE.DoubleSide
-                        });
-
-                        const plane = new THREE.Mesh(geometry, material);
-                        
-                        // Position around tree in 3D space
-                        const angle = (i / shuffled.length) * Math.PI * 2 + Math.random() * 0.5;
-                        const radius = 8 + Math.random() * 4; // Distance from tree
-                        const yPos = Math.random() * 8 - 2; // Random height
-                        
-                        plane.position.set(
-                            Math.cos(angle) * radius,
-                            yPos,
-                            Math.sin(angle) * radius
-                        );
-                        
-                        // Face toward center
-                        plane.lookAt(0, yPos, 0);
-                        
-                        // Store original position for animation
-                        plane.userData = {
-                            originalAngle: angle,
-                            originalY: yPos,
-                            radius: radius,
-                            speed: 0.1 + Math.random() * 0.15,
-                            bobSpeed: 0.5 + Math.random() * 0.5,
-                            bobAmount: 0.2 + Math.random() * 0.3,
-                            photoUrl: photoUrl
-                        };
-
-                        scene.add(plane);
-                        photoPlanes.push(plane);
-
-                        // Fade in animation
-                        const fadeIn = () => {
-                            if (plane.material.opacity < 1) {
-                                plane.material.opacity += 0.05;
-                                requestAnimationFrame(fadeIn);
-                            }
-                        };
-                        fadeIn();
-                    });
-                }, i * 100);
+            // Add all photos to world data with random positions
+            PHOTOS.forEach(photoUrl => {
+                addPhotoToWorld(photoUrl);
             });
-
+            
+            console.log(`Added ${allPhotoData.length} photos to world`);
+            
+            // Initial visibility update will be done in animate loop
+            
             // Show replay button
             setTimeout(() => {
                 document.getElementById('replay-btn').classList.add('visible');
-            }, shuffled.length * 100 + 1000);
+            }, 2000);
         }
 
         function updatePhotoPlanes(time) {
-            // Photos stay fixed - no updates needed
+            // Make visible photos face camera (billboard effect)
+            photoPlanes.forEach(plane => {
+                if (plane.parent) {
+                    plane.lookAt(camera.position);
+                }
+            });
         }
 
         function checkIntersection(x, y) {
@@ -1097,6 +1553,9 @@
 
             const time = clock.getElapsedTime();
 
+            // Update camera movement (WASD keys)
+            updateCameraMovement();
+
             // Update animation progress
             if (isAnimating) {
                 animationProgress += CONFIG.animationSpeed;
@@ -1119,7 +1578,7 @@
                 glowParticles.material.uniforms.uProgress.value = animationProgress;
             }
 
-            // Update star visibility and animation (just the star, no glow spheres)
+            // Update star visibility and animation
             if (starMesh) {
                 const starOpacity = animationProgress >= 0.95 ? Math.min(1, (animationProgress - 0.95) * 20) : 0;
                 starMesh.material.opacity = starOpacity;
@@ -1143,7 +1602,10 @@
             // Update controls
             controls.update();
 
-            // Update 3D floating photos
+            // Update chunk visibility (load/unload photos based on camera position)
+            updateChunkVisibility();
+
+            // Update photo planes (billboard effect)
             updatePhotoPlanes(time);
 
             // Update snow
@@ -1174,13 +1636,35 @@
             isAnimating = true;
             photosShown = false;
 
-            // Remove 3D photo planes
+            // Remove all visible photo planes
             photoPlanes.forEach(plane => {
                 scene.remove(plane);
-                plane.geometry.dispose();
-                plane.material.dispose();
+                if (plane.geometry) plane.geometry.dispose();
+                if (plane.material) {
+                    plane.material.map = null;
+                    plane.material.dispose();
+                }
             });
             photoPlanes = [];
+            
+            // Reset photo data with new progressive positions
+            allPhotoData.forEach((photo, index) => {
+                photo.visible = false;
+                photo.loaded = false;
+                photo.loading = false;
+                photo.plane = null;
+            });
+            
+            // Clear and re-add with progressive positions
+            const urls = allPhotoData.map(p => p.url);
+            allPhotoData = [];
+            urls.forEach(url => {
+                addPhotoToWorld(url);
+            });
+            
+            // Reset camera position
+            camera.position.set(0, 5, 25);
+            controls.target.set(0, 0, 0);
             
             document.getElementById('replay-btn').classList.remove('visible');
         };
@@ -1213,9 +1697,9 @@
                     
                     console.log('Uploaded to Firebase Database');
                     
-                    // Add to photos array and display
+                    // Add to photos array and world
                     PHOTOS.push(base64);
-                    addFloatingPhoto(base64);
+                    addPhotoToWorld(base64);
                     updatePhotoCount();
                 } catch (e) {
                     console.error('Firebase upload error:', e);
@@ -1226,57 +1710,6 @@
             loadingOverlay.classList.remove('active');
             document.getElementById('photo-upload').value = '';
         };
-
-        function addFloatingPhoto(url) {
-            const textureLoader = new THREE.TextureLoader();
-            textureLoader.load(url, (texture) => {
-                const aspect = texture.image.width / texture.image.height;
-                const height = 1.5 + Math.random() * 0.5;
-                const width = height * aspect;
-
-                const geometry = new THREE.PlaneGeometry(width, height);
-                const material = new THREE.MeshBasicMaterial({
-                    map: texture,
-                    transparent: true,
-                    opacity: 0,
-                    side: THREE.DoubleSide
-                });
-
-                const plane = new THREE.Mesh(geometry, material);
-                
-                const angle = Math.random() * Math.PI * 2;
-                const radius = 8 + Math.random() * 4;
-                const yPos = Math.random() * 8 - 2;
-                
-                plane.position.set(
-                    Math.cos(angle) * radius,
-                    yPos,
-                    Math.sin(angle) * radius
-                );
-                
-                plane.userData = {
-                    originalAngle: angle,
-                    originalY: yPos,
-                    radius: radius,
-                    speed: 0.1 + Math.random() * 0.15,
-                    bobSpeed: 0.5 + Math.random() * 0.5,
-                    bobAmount: 0.2 + Math.random() * 0.3,
-                    photoUrl: url
-                };
-
-                scene.add(plane);
-                photoPlanes.push(plane);
-
-                // Fade in
-                const fadeIn = () => {
-                    if (plane.material.opacity < 1) {
-                        plane.material.opacity += 0.05;
-                        requestAnimationFrame(fadeIn);
-                    }
-                };
-                fadeIn();
-            });
-        }
 
         // ============= START =============
         init();
